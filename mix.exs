@@ -8,20 +8,37 @@ defmodule ExDir.MixProject do
       elixir: "~> 1.10",
       start_permanent: Mix.env() == :prod,
       deps: deps()
+      package: package(),
+      name: "ExDir",
+      source_url: "https://github.com/team-telnyx/exdir",
+      description: description()
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
       extra_applications: [:logger]
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
       {:dirent, "~> 1.0.2"}
+    ]
+  end
+
+  defp description do
+    """
+    An iterative directory listing for Elixir.
+    """
+  end
+
+  defp package do
+    [
+      maintainers: ["Guilherme Balena Versiani"],
+      licenses: ["Apache 2.0"],
+      links: %{"GitHub" => "https://github.com/team-telnyx/exdir"},
+      files: ~w"lib mix.exs README.md LICENSE"
     ]
   end
 end

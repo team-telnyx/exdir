@@ -1,4 +1,6 @@
-# ExDir
+# ExDir - Iterative directory listing library
+
+Copyright (c) 2020 Telnyx LLC.
 
 **dirent** is an iterative directory listing for Elixir.
 
