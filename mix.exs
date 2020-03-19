@@ -23,7 +23,8 @@ defmodule ExDir.MixProject do
 
   defp deps do
     [
-      {:dirent, "~> 1.0.2"}
+      {:dirent, "~> 1.0.2"},
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 
