@@ -4,7 +4,7 @@ defmodule ExDir.MixProject do
   def project do
     [
       app: :exdir,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.10",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -23,7 +23,7 @@ defmodule ExDir.MixProject do
 
   defp deps do
     [
-      {:dirent, "~> 1.0.2"},
+      {:dirent, "~> 1.0.3"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
@@ -36,7 +36,7 @@ defmodule ExDir.MixProject do
 
   defp package do
     [
-      maintainers: ["Guilherme Balena Versiani"],
+      maintainers: ["Guilherme Balena Versiani <guilherme@telnyx.com>"],
       licenses: ["Apache 2.0"],
       links: %{"GitHub" => "https://github.com/team-telnyx/exdir"},
       files: ~w"lib mix.exs README.md LICENSE"
