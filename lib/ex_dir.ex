@@ -37,6 +37,9 @@ defmodule ExDir do
         push_to_worker(file_path)
       end)
 
+  So you can start consuming files straight away, without having to wait for
+  `File.ls/1` to complete as you would normally do.
+
   Notice that `ExDir` is a system resource and thus it is _mutable_. It means
   that after reading all files from the directory, the only way to read it a
   second time is by opening the directory again.
@@ -49,36 +52,74 @@ defmodule ExDir do
   long directories, or better accept listing them unordered.
   """
 
-  defstruct dir: nil
+  defstruct dir: nil, opts: []
 
   @type t :: %__MODULE__{dir: reference}
+
+  @type options :: [option]
+
+  @type option :: {:read, :type | :raw}
+
+  @type filename :: binary
+
+  @type dirname :: Path.t
+
+  @type posix_error :: :enoent | :eacces | :emfile | :enfile | :enomem | :enotdir | atom
+
+  @type file_type :: :device | :directory | :symlink | :regular | :other | :undefined
 
   @doc """
   Opens the given `path`.
 
-  Possible errors:
+  The only available option is `:read`. You can choose one of the following:
 
-    * `{:error, :enoent}`: Directory does not exist, or `path` is an empty
-      string.
-    * `{:error, :eacces}`: Permission denied.
-    * `{:error, :emfile}`: The per-process limit on the number of open file
-      descriptors has been reached.
-    * `{:error, :enfile}`: The system-wide limit on the total number of open
-      files has been reached.
-    * `{:error, :enomem}`: Insufficient memory to complete the operation.
-    * `{:error, :enotdir}`: `path` is not a directory.
+    * `:type`: If the filesystem supports it, returns the file type along the
+      file name while reading. It will skip filenames with invalid Unicode
+      characters.
+    * `:raw`: Returns the file type, and doesn't skip filenames containing
+      invalid Unicode characters (use with care).
+
+  If not specified, the `readdir` will not return file types and will skip
+  invalid filenames.
+
+  Possible error reasons:
+
+    * `:enoent`: Directory does not exist, or `path` is an empty string.
+    * `:eacces`: Permission denied.
+    * `:emfile`: The per-process limit on the number of open file descriptors
+      has been reached.
+    * `:enfile`: The system-wide limit on the total number of open files has
+      been reached.
+    * `:enomem`: Insufficient memory to complete the operation.
+    * `:enotdir`: `path` is not a directory.
 
   ## Example
 
       ExDir.opendir(".")
       {:ok, #ExDir<#Reference<0.3456274719.489029636.202763>>}
   """
-  @spec opendir(Path.t()) :: {:ok, t} | {:error, term}
-  def opendir(path \\ ".") when is_binary(path) do
+  @spec opendir(dirname, options) :: {:ok, t} | {:error, posix_error}
+  def opendir(path \\ ".", options \\ []) when is_binary(path) and is_list(options) do
+    opts = normalize_options(options)
+
     case :dirent.opendir(path) do
-      {:ok, dir} -> {:ok, %__MODULE__{dir: dir}}
+      {:ok, dir} -> {:ok, %__MODULE__{dir: dir, opts: opts}}
       error -> error
     end
+  end
+
+  defp normalize_options(options) do
+    options
+    |> Enum.map(fn
+      {:read, read_option} when read_option in [:type, :raw] ->
+        {:read, read_option}
+
+      {:read, other} ->
+        raise ArgumentError, ":read should be either :type or :raw, got #{inspect(other)}"
+
+      other ->
+        raise ArgumentError, "unknown option #{inspect(other)}"
+    end)
   end
 
   @doc """
@@ -92,14 +133,37 @@ defmodule ExDir do
   internally. It means that calling this function twice for the same `ExDir`
   will result in different results.
   """
-  @spec readdir(t) :: binary | nil
-  def readdir(%__MODULE__{dir: dir}) do
-    case :dirent.readdir(dir) do
+  @spec readdir(t) ::
+          filename
+          | {file_type, filename}
+          | {:error, reason :: {:no_translation, binary} | :not_owner}
+          | nil
+  def readdir(%__MODULE__{dir: dir, opts: opts}) do
+    result =
+      case Keyword.get(opts, :read) do
+        nil -> :dirent.readdir(dir)
+        :type -> :dirent.readdir_type(dir)
+        :raw -> :dirent.readdir_raw(dir)
+      end
+
+    case result do
       :finished ->
         nil
 
-      file_path ->
+      {:error, reason} ->
+        {:error, reason}
+
+      {file_path, type} when is_list(file_path) ->
+        {type, IO.chardata_to_string(file_path)}
+
+      {file_path, type} ->
+        {type, file_path}
+
+      file_path when is_list(file_path) ->
         IO.chardata_to_string(file_path)
+
+      file_path ->
+        file_path
     end
   end
 
@@ -113,7 +177,7 @@ defmodule ExDir do
   """
   @spec set_controlling_process(t, pid) :: :ok
   def set_controlling_process(%__MODULE__{dir: dir}, owner) when is_pid(owner),
-    do: :dirent.set_controlling_process(dir, owner)
+    do: :dirent.controlling_process(dir, owner)
 end
 
 defimpl Enumerable, for: ExDir do
