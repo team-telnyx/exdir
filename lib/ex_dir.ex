@@ -62,7 +62,7 @@ defmodule ExDir do
 
   @type filename :: binary
 
-  @type dirname :: Path.t
+  @type dirname :: Path.t()
 
   @type posix_error :: :enoent | :eacces | :emfile | :enfile | :enomem | :enotdir | atom
 
@@ -100,11 +100,19 @@ defmodule ExDir do
   """
   @spec opendir(dirname, options) :: {:ok, t} | {:error, posix_error}
   def opendir(path \\ ".", options \\ []) when is_binary(path) and is_list(options) do
+    path = normalize_path(path)
     opts = normalize_options(options)
 
     case :dirent.opendir(path) do
       {:ok, dir} -> {:ok, %__MODULE__{dir: dir, opts: opts}}
       error -> error
+    end
+  end
+
+  defp normalize_path(path) do
+    case String.starts_with?(path, "~") do
+      true -> Path.expand(path)
+      false -> path
     end
   end
 
