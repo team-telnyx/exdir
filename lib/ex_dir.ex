@@ -52,15 +52,13 @@ defmodule ExDir do
   long directories, or better accept listing them unordered.
   """
 
-  defstruct dir: nil, opts: []
-
-  @type t :: %__MODULE__{dir: reference}
+  @type t :: reference
 
   @type options :: [option]
 
   @type option :: {:read, :type | :raw}
 
-  @type filename :: binary
+  @type filename :: Path.t()
 
   @type dirname :: Path.t()
 
@@ -70,17 +68,6 @@ defmodule ExDir do
 
   @doc """
   Opens the given `path`.
-
-  The only available option is `:read`. You can choose one of the following:
-
-    * `:type`: If the filesystem supports it, returns the file type along the
-      file name while reading. It will skip filenames with invalid Unicode
-      characters.
-    * `:raw`: Returns the file type, and doesn't skip filenames containing
-      invalid Unicode characters (use with care).
-
-  If not specified, the `readdir` will not return file types and will skip
-  invalid filenames.
 
   Possible error reasons:
 
@@ -95,16 +82,16 @@ defmodule ExDir do
 
   ## Example
 
-      ExDir.opendir(".")
-      {:ok, #ExDir<#Reference<0.3456274719.489029636.202763>>}
+      ExDir.open(".")
+      {:ok, #Reference<0.3456274719.489029636.202763>}
   """
-  @spec opendir(dirname, options) :: {:ok, t} | {:error, posix_error}
-  def opendir(path \\ ".", options \\ []) when is_binary(path) and is_list(options) do
+
+  @spec open(dirname) :: {:ok, t} | {:error, posix_error}
+  def open(path \\ ".") when is_binary(path) do
     path = normalize_path(path)
-    opts = normalize_options(options)
 
     case :dirent.opendir(path) do
-      {:ok, dir} -> {:ok, %__MODULE__{dir: dir, opts: opts}}
+      {:ok, dir} -> {:ok, dir}
       error -> error
     end
   end
@@ -116,37 +103,34 @@ defmodule ExDir do
     end
   end
 
-  defp normalize_options(options) do
-    options
-    |> Enum.map(fn
-      {:read, read_option} when read_option in [:type, :raw] ->
-        {:read, read_option}
-
-      {:read, other} ->
-        raise ArgumentError, ":read should be either :type or :raw, got #{inspect(other)}"
-
-      other ->
-        raise ArgumentError, "unknown option #{inspect(other)}"
-    end)
-  end
-
   @doc """
   Reads the opened directory.
+
+  The only available option is `:read`. You can choose one of the following:
+
+    * `:type` - if the filesystem supports it, returns the file type along the
+      file name while reading. It will skip filenames with invalid Unicode
+      characters.
+    * `:raw` - returns the file type, and doesn't skip filenames containing
+      invalid Unicode characters (use with care).
+
+  If not specified, the `readdir` will not return file types and will skip
+  invalid filenames.
 
   This function returns each entry in the directory iteratively. Filenames
   contain the full path, including the start `path` passed to `opendir/1`.
 
   This function breaks the general immutability of the language in the sense
   that `ExDir` is actually a system resource identifier, and thus it is mutable
-  internally. It means that calling this function twice for the same `ExDir`
+  internally. It means that calling this function twice for the same `dir`
   will result in different results.
   """
-  @spec readdir(t) ::
+  @spec read(t) ::
           filename
           | {file_type, filename}
           | {:error, reason :: {:no_translation, binary} | :not_owner}
           | nil
-  def readdir(%__MODULE__{dir: dir, opts: opts}) do
+  def read(dir, opts \\ []) when is_list(opts) do
     result =
       case Keyword.get(opts, :read) do
         nil -> :dirent.readdir(dir)
@@ -161,17 +145,33 @@ defmodule ExDir do
       {:error, reason} ->
         {:error, reason}
 
-      {file_path, type} when is_list(file_path) ->
-        {type, IO.chardata_to_string(file_path)}
+      {file_path, :unknown} ->
+        file_path
+        |> normalize_to_binary()
+        |> file_stat()
 
-      {file_path, type} ->
-        {type, file_path}
+      {file_path, file_type} ->
+        file_path =
+          file_path
+          |> normalize_to_binary()
 
-      file_path when is_list(file_path) ->
-        IO.chardata_to_string(file_path)
+        {file_type, file_path}
 
       file_path ->
         file_path
+        |> normalize_to_binary()
+    end
+  end
+
+  defp normalize_to_binary(file_path) when is_list(file_path),
+    do: IO.chardata_to_string(file_path)
+
+  defp normalize_to_binary(file_path), do: file_path
+
+  defp file_stat(file_path) do
+    case File.lstat(file_path) do
+      {:ok, %{type: file_type}} -> {file_type, file_path}
+      error -> error
     end
   end
 
@@ -184,32 +184,27 @@ defmodule ExDir do
   owner, delegating control to another process indicated by `pid`.
   """
   @spec set_controlling_process(t, pid) :: :ok
-  def set_controlling_process(%__MODULE__{dir: dir}, owner) when is_pid(owner),
+  def set_controlling_process(dir, owner) when is_pid(owner),
     do: :dirent.controlling_process(dir, owner)
-end
 
-defimpl Enumerable, for: ExDir do
-  def count(_dir), do: {:error, __MODULE__}
+  @doc """
+  Returns a `ExDir.Stream` for the given `path` with the given `options`.
 
-  def member?(_dir, _file_path), do: {:error, __MODULE__}
+  The stream implements only the `Enumerable` protocol, which means it can be
+  used for read only.
 
-  def reduce(_dir, {:halt, acc}, _fun), do: {:halted, acc}
-  def reduce(dir, {:suspend, acc}, fun), do: {:suspended, acc, &reduce(dir, &1, fun)}
+  The `options` argument configures how the filenames are returned when
+  streaming. It can be:
 
-  def reduce(dir, {:cont, acc}, fun) do
-    case ExDir.readdir(dir) do
-      nil -> {:done, acc}
-      head -> reduce(dir, fun.(head, acc), fun)
-    end
-  end
+    * `:raw` - all filenames will be returned, even invalid Unicode filenames.
+      Case this option is `false` (default) and the filename can't be
+      translated to Unicode, then an exception `ExDir.Error` will be raised.
+    * `type` - filenames will be returned along with their types in tuples
+      `{file_type, file_path}`, otherwise just `file_path`.
 
-  def slice(_dir), do: {:error, __MODULE__}
-end
-
-defimpl Inspect, for: ExDir do
-  import Inspect.Algebra
-
-  def inspect(%ExDir{dir: dir}, opts) do
-    concat(["#ExDir<", to_doc(dir, opts), ">"])
-  end
+  If the `recursive` argument is true, all subdirectories will be recursed,
+  except directory entries themselves.
+  """
+  def stream!(path, recursive \\ false, options \\ []),
+    do: ExDir.Stream.__build__(path, recursive, options)
 end
